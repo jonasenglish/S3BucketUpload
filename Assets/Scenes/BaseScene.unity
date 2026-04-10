@@ -1326,7 +1326,7 @@ GameObject:
   - component: {fileID: 1614332409}
   - component: {fileID: 1614332411}
   m_Layer: 5
-  m_Name: ImageGalery
+  m_Name: ImageGallery
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -1426,7 +1426,7 @@ GameObject:
   - component: {fileID: 1947630693}
   - component: {fileID: 1947630692}
   m_Layer: 5
-  m_Name: BrowseImageButton
+  m_Name: UploadImageButton
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0

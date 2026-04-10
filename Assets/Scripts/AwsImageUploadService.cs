@@ -234,4 +234,76 @@ public class AwsImageUploadService : MonoBehaviour
             _ => null
         };
     }
+
+    public IEnumerator UploadImageBytes(
+    byte[] fileBytes,
+    string fileName,
+    string contentType,
+    Action<PresignResponse> onSuccess,
+    Action<string> onError)
+    {
+        if (fileBytes == null || fileBytes.Length == 0)
+        {
+            onError?.Invoke("File was empty.");
+            yield break;
+        }
+
+        if (fileBytes.Length > maxFileSizeBytes)
+        {
+            onError?.Invoke($"File exceeds max size of {maxFileSizeBytes} bytes.");
+            yield break;
+        }
+
+        PresignResponse presignResponse = null;
+        bool presignComplete = false;
+        string presignError = null;
+
+        yield return RequestPresignedUrl(
+            fileName,
+            contentType,
+            response =>
+            {
+                presignResponse = response;
+                presignComplete = true;
+            },
+            error =>
+            {
+                presignError = error;
+                presignComplete = true;
+            });
+
+        if (!presignComplete || presignResponse == null)
+        {
+            onError?.Invoke($"Presign failed: {presignError ?? "Unknown error"}");
+            yield break;
+        }
+
+        bool uploadComplete = false;
+        string uploadError = null;
+
+        yield return UploadToPresignedUrl(
+            presignResponse.uploadUrl,
+            fileBytes,
+            contentType,
+            () => uploadComplete = true,
+            error =>
+            {
+                uploadError = error;
+                uploadComplete = true;
+            });
+
+        if (!uploadComplete)
+        {
+            onError?.Invoke("Upload did not complete.");
+            yield break;
+        }
+
+        if (!string.IsNullOrEmpty(uploadError))
+        {
+            onError?.Invoke(uploadError);
+            yield break;
+        }
+
+        onSuccess?.Invoke(presignResponse);
+    }
 }
