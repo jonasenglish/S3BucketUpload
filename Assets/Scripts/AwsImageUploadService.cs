@@ -11,7 +11,7 @@ public class AwsImageUploadService : MonoBehaviour
     [SerializeField] private string presignEndpoint;
 
     [Header("Upload Settings")]
-    [SerializeField] private int maxFileSizeBytes = 10 * 1024 * 1024; // 10 MB
+    [SerializeField] private int maxFileSizeBytes = 10 * 1024 * 1024;
 
     [Serializable]
     private class PresignRequest
@@ -30,11 +30,81 @@ public class AwsImageUploadService : MonoBehaviour
         public int expiresIn;
     }
 
-    [Serializable]
-    private class ErrorResponse
+    public int MaxFileSizeBytes => maxFileSizeBytes;
+
+    public IEnumerator RequestPresignedUrlForBrowser(
+        string fileName,
+        string contentType,
+        Action<PresignResponse> onSuccess,
+        Action<string> onError)
     {
-        public string error;
-        public string details;
+        if (string.IsNullOrWhiteSpace(fileName) || string.IsNullOrWhiteSpace(contentType))
+        {
+            onError?.Invoke("fileName and contentType are required.");
+            yield break;
+        }
+
+        string extension = Path.GetExtension(fileName).ToLowerInvariant();
+        string validatedType = GetContentType(extension);
+
+        if (string.IsNullOrWhiteSpace(validatedType))
+        {
+            onError?.Invoke($"Unsupported image type: {extension}");
+            yield break;
+        }
+
+        if (!string.Equals(validatedType, contentType, StringComparison.OrdinalIgnoreCase))
+        {
+            // Use the server-expected type derived from extension to keep things consistent.
+            contentType = validatedType;
+        }
+
+        PresignRequest requestBody = new PresignRequest
+        {
+            fileName = fileName,
+            contentType = contentType
+        };
+
+        string json = JsonUtility.ToJson(requestBody);
+        byte[] jsonBytes = Encoding.UTF8.GetBytes(json);
+
+        using UnityWebRequest request = new UnityWebRequest(presignEndpoint, UnityWebRequest.kHttpVerbPOST);
+        request.uploadHandler = new UploadHandlerRaw(jsonBytes);
+        request.downloadHandler = new DownloadHandlerBuffer();
+        request.SetRequestHeader("Content-Type", "application/json");
+
+        yield return request.SendWebRequest();
+
+        if (request.result != UnityWebRequest.Result.Success)
+        {
+            onError?.Invoke($"HTTP error while presigning: {request.error}\n{request.downloadHandler.text}");
+            yield break;
+        }
+
+        if (request.responseCode < 200 || request.responseCode >= 300)
+        {
+            onError?.Invoke($"Presign request failed with status {request.responseCode}: {request.downloadHandler.text}");
+            yield break;
+        }
+
+        PresignResponse response;
+        try
+        {
+            response = JsonUtility.FromJson<PresignResponse>(request.downloadHandler.text);
+        }
+        catch (Exception ex)
+        {
+            onError?.Invoke($"Failed to parse presign response: {ex.Message}\nRaw: {request.downloadHandler.text}");
+            yield break;
+        }
+
+        if (response == null || string.IsNullOrWhiteSpace(response.uploadUrl))
+        {
+            onError?.Invoke($"Presign response was invalid: {request.downloadHandler.text}");
+            yield break;
+        }
+
+        onSuccess?.Invoke(response);
     }
 
     public IEnumerator UploadImageFile(
@@ -89,24 +159,15 @@ public class AwsImageUploadService : MonoBehaviour
         string fileName = Path.GetFileName(filePath);
 
         PresignResponse presignResponse = null;
-        bool presignComplete = false;
         string presignError = null;
 
-        yield return RequestPresignedUrl(
+        yield return RequestPresignedUrlForBrowser(
             fileName,
             contentType,
-            response =>
-            {
-                presignResponse = response;
-                presignComplete = true;
-            },
-            error =>
-            {
-                presignError = error;
-                presignComplete = true;
-            });
+            response => presignResponse = response,
+            error => presignError = error);
 
-        if (!presignComplete || presignResponse == null)
+        if (presignResponse == null)
         {
             onError?.Invoke($"Presign failed: {presignError ?? "Unknown error"}");
             yield break;
@@ -139,58 +200,6 @@ public class AwsImageUploadService : MonoBehaviour
         }
 
         onSuccess?.Invoke(presignResponse);
-    }
-
-    private IEnumerator RequestPresignedUrl(
-        string fileName,
-        string contentType,
-        Action<PresignResponse> onSuccess,
-        Action<string> onError)
-    {
-        PresignRequest requestBody = new PresignRequest
-        {
-            fileName = fileName,
-            contentType = contentType
-        };
-
-        string json = JsonUtility.ToJson(requestBody);
-        byte[] jsonBytes = Encoding.UTF8.GetBytes(json);
-
-        using UnityWebRequest request = new UnityWebRequest(presignEndpoint, UnityWebRequest.kHttpVerbPOST);
-        request.uploadHandler = new UploadHandlerRaw(jsonBytes);
-        request.downloadHandler = new DownloadHandlerBuffer();
-        request.SetRequestHeader("Content-Type", "application/json");
-
-        yield return request.SendWebRequest();
-
-        if (request.result != UnityWebRequest.Result.Success)
-        {
-            onError?.Invoke($"HTTP error while presigning: {request.error}\n{request.downloadHandler.text}");
-            yield break;
-        }
-
-        if (request.responseCode < 200 || request.responseCode >= 300)
-        {
-            onError?.Invoke($"Presign request failed with status {request.responseCode}: {request.downloadHandler.text}");
-            yield break;
-        }
-
-        try
-        {
-            PresignResponse response = JsonUtility.FromJson<PresignResponse>(request.downloadHandler.text);
-
-            if (response == null || string.IsNullOrWhiteSpace(response.uploadUrl))
-            {
-                onError?.Invoke($"Presign response was invalid: {request.downloadHandler.text}");
-                yield break;
-            }
-
-            onSuccess?.Invoke(response);
-        }
-        catch (Exception ex)
-        {
-            onError?.Invoke($"Failed to parse presign response: {ex.Message}\nRaw: {request.downloadHandler.text}");
-        }
     }
 
     private IEnumerator UploadToPresignedUrl(
@@ -233,77 +242,5 @@ public class AwsImageUploadService : MonoBehaviour
             ".gif" => "image/gif",
             _ => null
         };
-    }
-
-    public IEnumerator UploadImageBytes(
-    byte[] fileBytes,
-    string fileName,
-    string contentType,
-    Action<PresignResponse> onSuccess,
-    Action<string> onError)
-    {
-        if (fileBytes == null || fileBytes.Length == 0)
-        {
-            onError?.Invoke("File was empty.");
-            yield break;
-        }
-
-        if (fileBytes.Length > maxFileSizeBytes)
-        {
-            onError?.Invoke($"File exceeds max size of {maxFileSizeBytes} bytes.");
-            yield break;
-        }
-
-        PresignResponse presignResponse = null;
-        bool presignComplete = false;
-        string presignError = null;
-
-        yield return RequestPresignedUrl(
-            fileName,
-            contentType,
-            response =>
-            {
-                presignResponse = response;
-                presignComplete = true;
-            },
-            error =>
-            {
-                presignError = error;
-                presignComplete = true;
-            });
-
-        if (!presignComplete || presignResponse == null)
-        {
-            onError?.Invoke($"Presign failed: {presignError ?? "Unknown error"}");
-            yield break;
-        }
-
-        bool uploadComplete = false;
-        string uploadError = null;
-
-        yield return UploadToPresignedUrl(
-            presignResponse.uploadUrl,
-            fileBytes,
-            contentType,
-            () => uploadComplete = true,
-            error =>
-            {
-                uploadError = error;
-                uploadComplete = true;
-            });
-
-        if (!uploadComplete)
-        {
-            onError?.Invoke("Upload did not complete.");
-            yield break;
-        }
-
-        if (!string.IsNullOrEmpty(uploadError))
-        {
-            onError?.Invoke(uploadError);
-            yield break;
-        }
-
-        onSuccess?.Invoke(presignResponse);
     }
 }

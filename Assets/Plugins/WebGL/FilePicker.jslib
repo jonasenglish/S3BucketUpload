@@ -1,5 +1,8 @@
 mergeInto(LibraryManager.library, {
-  OpenImageFilePicker: function (gameObjectNamePtr, callbackMethodPtr) {
+  OpenImageFilePicker_MetadataOnly: function (
+    gameObjectNamePtr,
+    callbackMethodPtr,
+  ) {
     const gameObjectName = UTF8ToString(gameObjectNamePtr);
     const callbackMethod = UTF8ToString(callbackMethodPtr);
 
@@ -14,29 +17,19 @@ mergeInto(LibraryManager.library, {
       document.body.appendChild(input);
     }
 
-    input.onchange = async function () {
+    input.onchange = function () {
       const file = input.files && input.files[0];
       if (!file) {
         SendMessage(gameObjectName, callbackMethod, "");
         return;
       }
 
-      const arrayBuffer = await file.arrayBuffer();
-      const bytes = new Uint8Array(arrayBuffer);
-
-      let binary = "";
-      const chunkSize = 0x8000;
-      for (let i = 0; i < bytes.length; i += chunkSize) {
-        binary += String.fromCharCode.apply(
-          null,
-          bytes.subarray(i, i + chunkSize),
-        );
-      }
+      window.__unitySelectedUploadFile = file;
 
       const payload = JSON.stringify({
-        fileName: file.name,
+        fileName: file.name || "",
         contentType: file.type || "",
-        base64: btoa(binary),
+        fileSize: file.size || 0,
       });
 
       SendMessage(gameObjectName, callbackMethod, payload);
@@ -44,5 +37,80 @@ mergeInto(LibraryManager.library, {
     };
 
     input.click();
+  },
+
+  UploadSelectedBrowserFile: function (
+    gameObjectNamePtr,
+    callbackMethodPtr,
+    uploadUrlPtr,
+    contentTypePtr,
+  ) {
+    const gameObjectName = UTF8ToString(gameObjectNamePtr);
+    const callbackMethod = UTF8ToString(callbackMethodPtr);
+    const uploadUrl = UTF8ToString(uploadUrlPtr);
+    const contentType = UTF8ToString(contentTypePtr);
+
+    const file = window.__unitySelectedUploadFile;
+    if (!file) {
+      SendMessage(
+        gameObjectName,
+        callbackMethod,
+        JSON.stringify({
+          success: false,
+          error: "No browser file is currently selected.",
+        }),
+      );
+      return;
+    }
+
+    fetch(uploadUrl, {
+      method: "PUT",
+      headers: {
+        "Content-Type": contentType,
+      },
+      body: file,
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          let text = "";
+          try {
+            text = await response.text();
+          } catch (_) {}
+
+          SendMessage(
+            gameObjectName,
+            callbackMethod,
+            JSON.stringify({
+              success: false,
+              error:
+                "S3 upload failed with status " +
+                response.status +
+                (text ? ": " + text : ""),
+            }),
+          );
+          return;
+        }
+
+        window.__unitySelectedUploadFile = null;
+
+        SendMessage(
+          gameObjectName,
+          callbackMethod,
+          JSON.stringify({
+            success: true,
+            error: "",
+          }),
+        );
+      })
+      .catch((err) => {
+        SendMessage(
+          gameObjectName,
+          callbackMethod,
+          JSON.stringify({
+            success: false,
+            error: err && err.message ? err.message : String(err),
+          }),
+        );
+      });
   },
 });

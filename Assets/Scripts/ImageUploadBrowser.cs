@@ -18,14 +18,24 @@ public class ImageUploadBrowser : MonoBehaviour
 
 #if UNITY_WEBGL && !UNITY_EDITOR
     [DllImport("__Internal")]
-    private static extern void OpenImageFilePicker(string gameObjectName, string callbackMethod);
+    private static extern void OpenImageFilePicker_MetadataOnly(string gameObjectName, string callbackMethod);
+
+    [DllImport("__Internal")]
+    private static extern void UploadSelectedBrowserFile(string gameObjectName, string callbackMethod, string uploadUrl, string contentType);
 
     [Serializable]
-    private class PickedFilePayload
+    private class PickedFileMetadata
     {
         public string fileName;
         public string contentType;
-        public string base64;
+        public int fileSize;
+    }
+
+    [Serializable]
+    private class BrowserUploadResult
+    {
+        public bool success;
+        public string error;
     }
 #endif
 
@@ -53,7 +63,7 @@ public class ImageUploadBrowser : MonoBehaviour
 
 #if UNITY_WEBGL && !UNITY_EDITOR
         SetStatus("Opening browser file picker...");
-        OpenImageFilePicker(gameObject.name, nameof(OnWebGLFilePicked));
+        OpenImageFilePicker_MetadataOnly(gameObject.name, nameof(OnWebGLFileSelected));
 #else
         BrowseForImageDesktop();
 #endif
@@ -91,52 +101,11 @@ public class ImageUploadBrowser : MonoBehaviour
             return;
         }
 
-        StartCoroutine(UploadSelectedFile(filePath));
+        StartCoroutine(UploadSelectedFileDesktop(filePath));
     }
 #endif
 
-#if UNITY_WEBGL && !UNITY_EDITOR
-    public void OnWebGLFilePicked(string json)
-    {
-        if (string.IsNullOrWhiteSpace(json))
-        {
-            SetStatus("No file selected.");
-            return;
-        }
-
-        PickedFilePayload payload;
-        try
-        {
-            payload = JsonUtility.FromJson<PickedFilePayload>(json);
-        }
-        catch (Exception ex)
-        {
-            SetStatus($"Failed to parse selected file: {ex.Message}");
-            return;
-        }
-
-        if (payload == null || string.IsNullOrWhiteSpace(payload.fileName) || string.IsNullOrWhiteSpace(payload.base64))
-        {
-            SetStatus("Selected file data was invalid.");
-            return;
-        }
-
-        byte[] fileBytes;
-        try
-        {
-            fileBytes = Convert.FromBase64String(payload.base64);
-        }
-        catch (Exception ex)
-        {
-            SetStatus($"Failed to decode selected file: {ex.Message}");
-            return;
-        }
-
-        StartCoroutine(UploadSelectedFile(payload.fileName, payload.contentType, fileBytes));
-    }
-#endif
-
-    private IEnumerator UploadSelectedFile(string filePath)
+    private IEnumerator UploadSelectedFileDesktop(string filePath)
     {
         isUploading = true;
         SetStatus($"Preparing {Path.GetFileName(filePath)}...");
@@ -160,31 +129,108 @@ public class ImageUploadBrowser : MonoBehaviour
         SetStatus($"Upload complete!\n{response.objectKey}");
     }
 
-    private IEnumerator UploadSelectedFile(string fileName, string contentType, byte[] fileBytes)
+#if UNITY_WEBGL && !UNITY_EDITOR
+    public void OnWebGLFileSelected(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            SetStatus("No file selected.");
+            return;
+        }
+
+        PickedFileMetadata metadata;
+        try
+        {
+            metadata = JsonUtility.FromJson<PickedFileMetadata>(json);
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Failed to parse selected file metadata: {ex.Message}");
+            return;
+        }
+
+        if (metadata == null || string.IsNullOrWhiteSpace(metadata.fileName) || string.IsNullOrWhiteSpace(metadata.contentType))
+        {
+            SetStatus("Selected file metadata was invalid.");
+            return;
+        }
+
+        if (metadata.fileSize <= 0)
+        {
+            SetStatus("File was empty.");
+            return;
+        }
+
+        if (metadata.fileSize > uploadService.MaxFileSizeBytes)
+        {
+            SetStatus($"File exceeds max size of {uploadService.MaxFileSizeBytes} bytes.");
+            return;
+        }
+
+        StartCoroutine(RequestPresignAndUploadWebGL(metadata));
+    }
+
+    private IEnumerator RequestPresignAndUploadWebGL(PickedFileMetadata metadata)
     {
         isUploading = true;
-        SetStatus($"Preparing {fileName}...");
+        SetStatus($"Preparing {metadata.fileName}...");
 
         AwsImageUploadService.PresignResponse response = null;
         string error = null;
 
-        yield return uploadService.UploadImageBytes(
-            fileBytes,
-            fileName,
-            contentType,
+        yield return uploadService.RequestPresignedUrlForBrowser(
+            metadata.fileName,
+            metadata.contentType,
             successResponse => response = successResponse,
             errorMessage => error = errorMessage);
 
-        isUploading = false;
-
-        if (!string.IsNullOrEmpty(error))
+        if (!string.IsNullOrEmpty(error) || response == null)
         {
-            SetStatus($"Upload failed:\n{error}");
+            isUploading = false;
+            SetStatus($"Upload failed:\n{error ?? "Failed to get presigned URL."}");
             yield break;
         }
 
-        SetStatus($"Upload complete!\n{response.objectKey}");
+        SetStatus("Uploading file...");
+        UploadSelectedBrowserFile(gameObject.name, nameof(OnWebGLUploadFinished), response.uploadUrl, response.contentType);
     }
+
+    public void OnWebGLUploadFinished(string json)
+    {
+        isUploading = false;
+
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            SetStatus("Upload failed:\nNo response from browser upload.");
+            return;
+        }
+
+        BrowserUploadResult result;
+        try
+        {
+            result = JsonUtility.FromJson<BrowserUploadResult>(json);
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Upload failed:\nCould not parse browser response: {ex.Message}");
+            return;
+        }
+
+        if (result == null)
+        {
+            SetStatus("Upload failed:\nInvalid browser response.");
+            return;
+        }
+
+        if (!result.success)
+        {
+            SetStatus($"Upload failed:\n{result.error}");
+            return;
+        }
+
+        SetStatus("Upload complete!");
+    }
+#endif
 
     private void SetStatus(string message)
     {
