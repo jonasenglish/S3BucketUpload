@@ -10,8 +10,7 @@ mergeInto(LibraryManager.library, {
     if (!input) {
       input = document.createElement("input");
       input.type = "file";
-      input.accept =
-        ".png,.jpg,.jpeg,.webp,.gif,image/png,image/jpeg,image/webp,image/gif";
+      input.accept = ".png,.jpg,.jpeg,image/png,image/jpeg";
       input.id = "unity-image-file-input";
       input.style.display = "none";
       document.body.appendChild(input);

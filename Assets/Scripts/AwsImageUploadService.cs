@@ -7,9 +7,6 @@ using UnityEngine.Networking;
 
 public class AwsImageUploadService : MonoBehaviour
 {
-    [Header("Presign API")]
-    [SerializeField] private string presignEndpoint;
-
     [Header("Upload Settings")]
     [SerializeField] private int maxFileSizeBytes = 10 * 1024 * 1024;
 
@@ -33,10 +30,10 @@ public class AwsImageUploadService : MonoBehaviour
     public int MaxFileSizeBytes => maxFileSizeBytes;
 
     public IEnumerator RequestPresignedUrlForBrowser(
-        string fileName,
-        string contentType,
-        Action<PresignResponse> onSuccess,
-        Action<string> onError)
+    string fileName,
+    string contentType,
+    Action<PresignResponse> onSuccess,
+    Action<string> onError)
     {
         if (string.IsNullOrWhiteSpace(fileName) || string.IsNullOrWhiteSpace(contentType))
         {
@@ -55,7 +52,6 @@ public class AwsImageUploadService : MonoBehaviour
 
         if (!string.Equals(validatedType, contentType, StringComparison.OrdinalIgnoreCase))
         {
-            // Use the server-expected type derived from extension to keep things consistent.
             contentType = validatedType;
         }
 
@@ -68,10 +64,11 @@ public class AwsImageUploadService : MonoBehaviour
         string json = JsonUtility.ToJson(requestBody);
         byte[] jsonBytes = Encoding.UTF8.GetBytes(json);
 
-        using UnityWebRequest request = new UnityWebRequest(presignEndpoint, UnityWebRequest.kHttpVerbPOST);
+        using UnityWebRequest request = new UnityWebRequest(RuntimeConfigLoader.UploadUrl, UnityWebRequest.kHttpVerbPOST);
         request.uploadHandler = new UploadHandlerRaw(jsonBytes);
         request.downloadHandler = new DownloadHandlerBuffer();
         request.SetRequestHeader("Content-Type", "application/json");
+        RuntimeConfigLoader.Instance?.ApplyAuth(request);
 
         yield return request.SendWebRequest();
 
@@ -238,8 +235,6 @@ public class AwsImageUploadService : MonoBehaviour
             ".png" => "image/png",
             ".jpg" => "image/jpeg",
             ".jpeg" => "image/jpeg",
-            ".webp" => "image/webp",
-            ".gif" => "image/gif",
             _ => null
         };
     }

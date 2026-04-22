@@ -9,10 +9,6 @@ using UnityEngine.UI;
 
 public class ProcessedImageGallery : MonoBehaviour
 {
-    [Header("Endpoints")]
-    [SerializeField] private string listProcessedImagesEndpoint;
-    [SerializeField] private string deleteProcessedImageEndpoint;
-
     [Header("UI")]
     [SerializeField] private Transform contentParent;
     [SerializeField] private GalleryImageTile tilePrefab;
@@ -75,13 +71,23 @@ public class ProcessedImageGallery : MonoBehaviour
 
     private IEnumerator LoadGallery()
     {
+        yield return RuntimeConfigLoader.WaitUntilLoaded();
+
+        if (RuntimeConfigLoader.Instance == null || RuntimeConfigLoader.Instance.LoadFailed)
+        {
+            SetStatus("Runtime config failed to load.");
+            yield break;
+        }
+
         SetStatus("Loading images...");
         ClearExistingImages();
         selectedItem = null;
         SetDeleteInteractable(false);
 
-        using UnityWebRequest request = UnityWebRequest.Get(listProcessedImagesEndpoint);
+        Debug.Log("Retrieving images from: " + RuntimeConfigLoader.ViewImagesUrl);
+        using UnityWebRequest request = UnityWebRequest.Get(RuntimeConfigLoader.ViewImagesUrl);
         request.downloadHandler = new DownloadHandlerBuffer();
+        RuntimeConfigLoader.Instance.ApplyAuth(request);
         yield return request.SendWebRequest();
 
         if (request.result != UnityWebRequest.Result.Success || request.responseCode < 200 || request.responseCode >= 300)
@@ -94,6 +100,11 @@ public class ProcessedImageGallery : MonoBehaviour
         try
         {
             response = JsonUtility.FromJson<ImageListResponse>(request.downloadHandler.text);
+            Debug.Log($"Received {response?.items?.Count ?? 0} items.");
+            foreach (var item in response?.items ?? new List<ImageItem>())
+            {
+                Debug.Log($"Item: {item.key}, URL: {item.downloadUrl}, SHA256: {item.sha256}, LastModified: {item.lastModified}, Size: {item.size}");
+            }
         }
         catch (Exception ex)
         {
@@ -143,22 +154,25 @@ public class ProcessedImageGallery : MonoBehaviour
 
     private IEnumerator DeleteImageCoroutine(ImageItem item)
     {
+        yield return RuntimeConfigLoader.WaitUntilLoaded();
+
+        if (RuntimeConfigLoader.Instance == null || RuntimeConfigLoader.Instance.LoadFailed)
+        {
+            SetStatus("Runtime config failed to load.");
+            yield break;
+        }
+
         SetStatus($"Deleting {item.key}...");
 
-        var body = new DeleteRequest
-        {
-            key = item.key,
-            sha256 = item.sha256
-        };
+        string deleteUrl = RuntimeConfigLoader.DeleteImageUrlTemplate
+            .Replace("{id+}", item.key)
+            .Replace("{id}", item.key);
 
-        string json = JsonUtility.ToJson(body);
-        byte[] jsonBytes = Encoding.UTF8.GetBytes(json);
+        Debug.Log($"Delete URL: {deleteUrl}");
 
-        using UnityWebRequest request = new UnityWebRequest(deleteProcessedImageEndpoint, UnityWebRequest.kHttpVerbPOST);
-        request.uploadHandler = new UploadHandlerRaw(jsonBytes);
+        using UnityWebRequest request = UnityWebRequest.Delete(deleteUrl);
         request.downloadHandler = new DownloadHandlerBuffer();
-        request.SetRequestHeader("Content-Type", "application/json");
-
+        RuntimeConfigLoader.Instance.ApplyAuth(request);
         yield return request.SendWebRequest();
 
         if (request.result != UnityWebRequest.Result.Success || request.responseCode < 200 || request.responseCode >= 300)

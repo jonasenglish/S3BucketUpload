@@ -1,7 +1,9 @@
+#if UNITY_WEBGL && !UNITY_EDITOR
 using System;
+using System.Runtime.InteropServices;
+#endif
 using System.Collections;
 using System.IO;
-using System.Runtime.InteropServices;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
@@ -74,11 +76,9 @@ public class ImageUploadBrowser : MonoBehaviour
     {
         var extensions = new[]
         {
-            new ExtensionFilter("Image Files", "png", "jpg", "jpeg", "webp", "gif"),
+            new ExtensionFilter("Image Files", "png", "jpg", "jpeg"),
             new ExtensionFilter("PNG", "png"),
-            new ExtensionFilter("JPEG", "jpg", "jpeg"),
-            new ExtensionFilter("WebP", "webp"),
-            new ExtensionFilter("GIF", "gif")
+            new ExtensionFilter("JPEG", "jpg", "jpeg")
         };
 
         string[] paths = StandaloneFileBrowser.OpenFilePanel(
@@ -164,6 +164,12 @@ public class ImageUploadBrowser : MonoBehaviour
         if (metadata.fileSize > uploadService.MaxFileSizeBytes)
         {
             SetStatus($"File exceeds max size of {uploadService.MaxFileSizeBytes} bytes.");
+            return;
+        }
+
+        if (metadata.contentType != "image/png" && metadata.contentType != "image/jpeg")
+        {
+            SetStatus("Only PNG and JPEG files are supported.");
             return;
         }
 
