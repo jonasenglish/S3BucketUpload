@@ -15,6 +15,7 @@ public class ProcessedImageGallery : MonoBehaviour
     [SerializeField] private TMP_Text statusLabel;
     [SerializeField] private Button refreshButton;
     [SerializeField] private Button deleteButton;
+    [SerializeField] private Button downloadButton;
 
     [Serializable]
     public class ImageItem
@@ -50,7 +51,11 @@ public class ProcessedImageGallery : MonoBehaviour
         if (deleteButton != null)
             deleteButton.onClick.AddListener(DeleteSelectedImage);
 
+        if (downloadButton != null)
+            downloadButton.onClick.AddListener(DownloadSelectedImage);
+
         SetDeleteInteractable(false);
+        SetDownloadInteractable(false);
     }
 
     public void RefreshGallery()
@@ -69,6 +74,24 @@ public class ProcessedImageGallery : MonoBehaviour
         StartCoroutine(DeleteImageCoroutine(selectedItem));
     }
 
+    public void DownloadSelectedImage()
+    {
+        if (selectedItem == null)
+        {
+            SetStatus("No image selected.");
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(selectedItem.downloadUrl))
+        {
+            SetStatus("Selected image does not have a download URL.");
+            return;
+        }
+
+        SetStatus($"Opening download: {selectedItem.key}");
+        Application.OpenURL(selectedItem.downloadUrl);
+    }
+
     private IEnumerator LoadGallery()
     {
         yield return RuntimeConfigLoader.WaitUntilLoaded();
@@ -83,6 +106,7 @@ public class ProcessedImageGallery : MonoBehaviour
         ClearExistingImages();
         selectedItem = null;
         SetDeleteInteractable(false);
+        SetDownloadInteractable(false);
 
         Debug.Log("Retrieving images from: " + RuntimeConfigLoader.ViewImagesUrl);
         using UnityWebRequest request = UnityWebRequest.Get(RuntimeConfigLoader.ViewImagesUrl);
@@ -149,6 +173,7 @@ public class ProcessedImageGallery : MonoBehaviour
     {
         selectedItem = item;
         SetDeleteInteractable(true);
+        SetDownloadInteractable(true);
         SetStatus($"Selected: {item.key}");
     }
 
@@ -200,6 +225,12 @@ public class ProcessedImageGallery : MonoBehaviour
     {
         if (deleteButton != null)
             deleteButton.interactable = value;
+    }
+
+    private void SetDownloadInteractable(bool value)
+    {
+        if (downloadButton != null)
+            downloadButton.interactable = value;
     }
 
     private void SetStatus(string message)
