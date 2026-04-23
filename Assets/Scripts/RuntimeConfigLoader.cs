@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Text;
 using UnityEngine;
 using UnityEngine.Networking;
 
@@ -27,6 +28,8 @@ public class RuntimeConfigLoader : MonoBehaviour
     public string AccessToken { get; private set; }
     public string IdToken { get; private set; }
 
+    public string UserEmail { get; private set; }
+
     public bool IsAuthenticated =>
         !string.IsNullOrWhiteSpace(IdToken) ||
         !string.IsNullOrWhiteSpace(AccessToken);
@@ -34,6 +37,11 @@ public class RuntimeConfigLoader : MonoBehaviour
     public static string UploadUrl => Instance?.Config?.uploadUrl;
     public static string ViewImagesUrl => Instance?.Config?.viewImagesUrl;
     public static string DeleteImageUrlTemplate => Instance?.Config?.deleteImageUrlTemplate;
+
+    public string WelcomeMessage =>
+        string.IsNullOrWhiteSpace(UserEmail)
+            ? "Welcome"
+            : $"Welcome {UserEmail}";
 
     private void Awake()
     {
@@ -120,6 +128,13 @@ public class RuntimeConfigLoader : MonoBehaviour
         }
 
         PlayerPrefs.Save();
+
+        UserEmail = TryGetEmailFromJwt(IdToken);
+
+        Debug.Log(
+            string.IsNullOrWhiteSpace(UserEmail)
+                ? "[RuntimeConfigLoader] No email claim found in ID token."
+                : $"[RuntimeConfigLoader] Resolved authenticated email '{UserEmail}'.");
 
         IsLoaded = true;
         Debug.Log(
@@ -214,5 +229,52 @@ public class RuntimeConfigLoader : MonoBehaviour
         Debug.Log(
             $"[RuntimeConfigLoader] Wait complete. " +
             $"InstanceExists={Instance != null}, IsLoaded={Instance?.IsLoaded == true}, LoadFailed={Instance?.LoadFailed == true}");
+    }
+
+    [Serializable]
+    private sealed class JwtPayload
+    {
+        public string email;
+    }
+
+    private static string TryGetEmailFromJwt(string jwt)
+    {
+        if (string.IsNullOrWhiteSpace(jwt))
+        {
+            return null;
+        }
+
+        try
+        {
+            var parts = jwt.Split('.');
+            if (parts.Length < 2)
+            {
+                return null;
+            }
+
+            var payload = parts[1].Replace('-', '+').Replace('_', '/');
+
+            switch (payload.Length % 4)
+            {
+                case 2:
+                    payload += "==";
+                    break;
+                case 3:
+                    payload += "=";
+                    break;
+            }
+
+            var json = Encoding.UTF8.GetString(Convert.FromBase64String(payload));
+            var jwtPayload = JsonUtility.FromJson<JwtPayload>(json);
+
+            return string.IsNullOrWhiteSpace(jwtPayload?.email)
+                ? null
+                : jwtPayload.email;
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[RuntimeConfigLoader] Failed to read email from ID token: {ex.Message}");
+            return null;
+        }
     }
 }
